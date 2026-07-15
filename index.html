@@ -952,135 +952,155 @@ var ALL_IDS = ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10", "c11
 
 // ── Load choices from Google Sheet on page open ───────────────────────
 function loadChoices() {
-  showStatus("Chargement...");
-  fetch(API_URL + "?action=get")
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      state = data;
-      restoreState();
-      hideStatus();
-    })
-    .catch(function() {
-      // Fallback to localStorage if API not configured yet
-      try { state = JSON.parse(localStorage.getItem("brugmann_v4") || "{}"); } catch(e) {}
-      restoreState();
-      hideStatus();
-    });
-}
-
-// ── Save one choice to Google Sheet ──────────────────────────────────
-function saveChoice(id, value) {
-  // Save locally immediately (instant UI)
-  try { localStorage.setItem("brugmann_v4", JSON.stringify(state)); } catch(e) {}
-  // Save to Google Sheet in background
-  if (API_URL !== "PASTE_YOUR_WEB_APP_URL_HERE") {
-    fetch(API_URL + "?action=set&id=" + encodeURIComponent(id) + "&value=" + encodeURIComponent(value || "null"))
-      .catch(function() {}); // silent fail
+  setSyncMsg("Chargement...");
+  if (API_URL === "https://script.google.com/macros/s/AKfycbw2HmzAIJnD7qgZuVJxlaMNF4HG2RMX0wwITi00RTWfzhqMbe6e7xDP9ymhN3IrUV5sjg/exec") {
+    // No API configured — use localStorage
+    try { state = JSON.parse(localStorage.getItem("brugmann_v4") || "{}"); } catch(e) {}
+    restoreState();
+    setSyncMsg("");
+    return;
   }
+  // Use JSONP to avoid CORS issues on mobile
+  var callbackName = "cb_" + Date.now();
+  window[callbackName] = function(data) {
+    state = data || {};
+    restoreState();
+    setSyncMsg("");
+    delete window[callbackName];
+    document.getElementById("jsonp-script") && document.getElementById("jsonp-script").remove();
+  };
+  var script = document.createElement("script");
+  script.id = "jsonp-script";
+  script.src = API_URL + "?action=get&callback=" + callbackName;
+  script.onerror = function() {
+    try { state = JSON.parse(localStorage.getItem("brugmann_v4") || "{}"); } catch(e) {}
+    restoreState();
+    setSyncMsg("");
+  };
+  document.head.appendChild(script);
+}
+function saveChoice(id, value) {
+  // Save locally immediately
+  try { localStorage.setItem("brugmann_v4", JSON.stringify(state)); } catch(e) {}
+  // Save to Google Sheet via JSONP
+  if (API_URL === "https://script.google.com/macros/s/AKfycbw2HmzAIJnD7qgZuVJxlaMNF4HG2RMX0wwITi00RTWfzhqMbe6e7xDP9ymhN3IrUV5sjg/exec") return;
+  var callbackName = "cbsave_" + Date.now();
+  window[callbackName] = function() { delete window[callbackName]; };
+  var script = document.createElement("script");
+  script.src = API_URL + "?action=set&id=" + encodeURIComponent(id) + "&value=" + encodeURIComponent(value || "null") + "&callback=" + callbackName;
+  script.onerror = function() { delete window[callbackName]; };
+  document.head.appendChild(script);
+  setTimeout(function() { script.remove(); }, 3000);
 }
 
-// ── Status indicator ──────────────────────────────────────────────────
-function showStatus(msg) {
-  var el = document.getElementById("sync-status");
-  if (el) { el.textContent = msg; el.style.display = "block"; }
+// -- Status indicator ──────────────────────────────────────────────
+function setSyncMsg(msg) {
+  var el = document.getElementById('sync-status');
+  if (el) { el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
 }
-function hideStatus() {
-  var el = document.getElementById("sync-status");
-  if (el) el.style.display = "none";
-}
+function showStatus(msg) { setSyncMsg(msg); }
+function hideStatus() { setSyncMsg(''); }
 
-// ── Tab switching ─────────────────────────────────────────────────────
+// -- Tab switching ─────────────────────────────────────────────────
 function showTab(t) {
-  document.querySelectorAll(".page").forEach(function(p) { p.classList.remove("active"); });
-  document.querySelectorAll(".tab").forEach(function(b) { b.classList.remove("active"); });
-  document.getElementById("page-" + t).classList.add("active");
-  var tabs = document.querySelectorAll(".tab");
-  tabs[t==="main"?0:t==="prio"?1:2].classList.add("active");
+  document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelectorAll('.tab').forEach(function(b) { b.classList.remove('active'); });
+  document.getElementById('page-' + t).classList.add('active');
+  var tabs = document.querySelectorAll('.tab');
+  tabs[t==='main'?0:t==='prio'?1:2].classList.add('active');
 }
 
-// ── Commune filter ────────────────────────────────────────────────────
-var activeFilter = "all";
+// -- Commune filter ────────────────────────────────────────────────
+var activeFilter = 'all';
 function filterCommune(commune, btn) {
   activeFilter = commune;
-  document.querySelectorAll(".filter-btn").forEach(function(b) { b.classList.remove("active"); });
-  btn.classList.add("active");
-  document.querySelectorAll("#page-main .card,#page-main .section-commune").forEach(function(el) {
-    if (commune === "all") {
-      if (!el.classList.contains("hs")) el.style.display = "";
+  document.querySelectorAll('.filter-btn,.fb').forEach(function(b) { b.classList.remove('active','on'); });
+  btn.classList.add('active'); btn.classList.add('on');
+  document.querySelectorAll('#page-main .card, #page-main .section-commune, #cards-main .card, #cards-main .sc').forEach(function(el) {
+    if (commune === 'all') {
+      if (!el.classList.contains('hs') && !el.classList.contains('hidden')) el.style.display = '';
     } else {
-      if (el.classList.contains("section-commune")) {
-        el.style.display = el.dataset.commune === commune ? "" : "none";
+      if (el.classList.contains('section-commune') || el.classList.contains('sc')) {
+        el.style.display = el.dataset.commune === commune ? '' : 'none';
       } else {
-        el.style.display = (el.dataset.commune === commune && !el.classList.contains("hs")) ? "" : "none";
+        var id = el.id ? el.id.replace('card-','') : '';
+        el.style.display = (el.dataset.commune === commune && !el.classList.contains('hs') && !el.classList.contains('hidden')) ? '' : 'none';
       }
     }
   });
   updateCounts();
 }
 
-// ── Counts ────────────────────────────────────────────────────────────
+// -- Counts ────────────────────────────────────────────────────────
 function counts() {
-  var liked    = Object.values(state).filter(function(v) { return v === "like"; }).length;
-  var disliked = Object.values(state).filter(function(v) { return v === "dislike"; }).length;
-  var visible  = ALL_IDS.filter(function(id) {
-    var c = document.getElementById(id);
-    return c && c.style.display !== "none" && !c.classList.contains("hs");
-  }).length;
-  document.getElementById("cnt-main").textContent = visible;
-  document.getElementById("cnt-prio").textContent = liked;
-  document.getElementById("cnt-np").textContent   = disliked;
+  var liked    = Object.values(state).filter(function(v) { return v === 'like'; }).length;
+  var disliked = Object.values(state).filter(function(v) { return v === 'dislike'; }).length;
+  var cmEl = document.getElementById('cnt-main') || document.getElementById('cm');
+  var cpEl = document.getElementById('cnt-prio') || document.getElementById('cp');
+  var cnEl = document.getElementById('cnt-np')   || document.getElementById('cn');
+  var allCards = document.querySelectorAll('#page-main .card, #cards-main .card');
+  var visible = 0;
+  allCards.forEach(function(c) {
+    if (c.style.display !== 'none' && !c.classList.contains('hs') && !c.classList.contains('hidden')) visible++;
+  });
+  if (cmEl) cmEl.textContent = visible;
+  if (cpEl) cpEl.textContent = liked;
+  if (cnEl) cnEl.textContent = disliked;
 }
 function updateCounts() { counts(); }
 
-// ── Show/hide card on main page ───────────────────────────────────────
+// -- Show/hide card ────────────────────────────────────────────────
 function show(id, vis) {
-  var c = document.getElementById(id);
+  // Support both id formats: "c1" and "card-c1"
+  var c = document.getElementById(id) || document.getElementById('card-' + id);
   if (!c) return;
   if (vis) {
-    c.classList.remove("hs");
-    if (activeFilter === "all" || c.dataset.commune === activeFilter) c.style.display = "";
+    c.classList.remove('hs'); c.classList.remove('hidden');
+    if (activeFilter === 'all' || c.dataset.commune === activeFilter) c.style.display = '';
   } else {
-    c.classList.add("hs");
-    c.style.display = "none";
+    c.classList.add('hs'); c.classList.add('hidden');
+    c.style.display = 'none';
   }
 }
 
-// ── Button state ──────────────────────────────────────────────────────
+// -- Button state ──────────────────────────────────────────────────
 function btns(id) {
-  var lb = document.getElementById("l" + id);
-  var db = document.getElementById("d" + id);
-  if (lb) lb.classList.toggle("active", state[id] === "like");
-  if (db) db.classList.toggle("active", state[id] === "dislike");
+  var lb = document.getElementById('lc' + id) || document.getElementById('bl-' + id) || document.getElementById('l' + id);
+  var db = document.getElementById('dc' + id) || document.getElementById('bd-' + id) || document.getElementById('d' + id);
+  if (lb) lb.classList.toggle('active', state[id] === 'like');
+  if (lb) lb.classList.toggle('on', state[id] === 'like');
+  if (db) db.classList.toggle('active', state[id] === 'dislike');
+  if (db) db.classList.toggle('on', state[id] === 'dislike');
 }
 
-// ── Clone card for prio/np tabs ───────────────────────────────────────
+// -- Clone card for prio/np tabs ───────────────────────────────────
 function mkClone(id, tab) {
-  var orig = document.getElementById(id);
+  var orig = document.getElementById(id) || document.getElementById('card-' + id);
   if (!orig) return null;
   var clone = orig.cloneNode(true);
-  clone.id = "clone-" + id;
-  clone.style.display = "";
-  clone.classList.remove("hs");
-  var fa   = clone.querySelector(".fa");
-  var vbtn = fa ? fa.querySelector(".bv,.bv.out,button.bv") : null;
+  clone.id = 'clone-' + id;
+  clone.style.display = '';
+  clone.classList.remove('hs'); clone.classList.remove('hidden');
+  var fa = clone.querySelector('.fa');
   if (fa) {
-    fa.innerHTML = "";
-    var undo = document.createElement("button");
-    undo.className = "bmove undo";
-    undo.textContent = "↩ Restaurer";
-    undo.onclick = function() { set(id, state[id]); }; // toggle off
+    var vbtn = fa.querySelector('a.bv, button.bv');
+    fa.innerHTML = '';
+    var undo = document.createElement('button');
+    undo.className = 'bmove undo bm undo';
+    undo.textContent = 'Restaurer';
+    undo.onclick = function() { set(id, state[id]); };
     fa.appendChild(undo);
-    if (tab === "prio") {
-      var mv = document.createElement("button");
-      mv.className = "bmove to-np";
-      mv.textContent = "→ Écartées";
-      mv.onclick = function() { forceSet(id, "dislike"); };
+    if (tab === 'prio') {
+      var mv = document.createElement('button');
+      mv.className = 'bmove tonp bm tonp';
+      mv.textContent = 'Ecartees';
+      mv.onclick = function() { forceSet(id, 'dislike'); };
       fa.appendChild(mv);
     } else {
-      var mv2 = document.createElement("button");
-      mv2.className = "bmove to-prio";
-      mv2.textContent = "→ Prioritaires";
-      mv2.onclick = function() { forceSet(id, "like"); };
+      var mv2 = document.createElement('button');
+      mv2.className = 'bmove toprio bm toprio';
+      mv2.textContent = 'Prioritaires';
+      mv2.onclick = function() { forceSet(id, 'like'); };
       fa.appendChild(mv2);
     }
     if (vbtn) fa.appendChild(vbtn.cloneNode(true));
@@ -1089,21 +1109,25 @@ function mkClone(id, tab) {
 }
 
 function refresh() {
-  var pc = document.getElementById("prio-cards");
-  var nc = document.getElementById("np-cards");
-  pc.innerHTML = ""; nc.innerHTML = "";
-  var liked    = Object.entries(state).filter(function(e) { return e[1] === "like"; }).map(function(e) { return e[0]; });
-  var disliked = Object.entries(state).filter(function(e) { return e[1] === "dislike"; }).map(function(e) { return e[0]; });
-  liked.forEach(function(id)    { var c = mkClone(id,"prio"); if(c) pc.appendChild(c); });
-  disliked.forEach(function(id) { var c = mkClone(id,"np");   if(c) nc.appendChild(c); });
-  document.getElementById("prio-empty").style.display = liked.length    ? "none" : "block";
-  document.getElementById("np-empty").style.display   = disliked.length ? "none" : "block";
+  var pc = document.getElementById('prio-cards') || document.getElementById('cards-prio');
+  var nc = document.getElementById('np-cards')   || document.getElementById('cards-np');
+  if (pc) pc.innerHTML = '';
+  if (nc) nc.innerHTML = '';
+  var liked    = Object.entries(state).filter(function(e) { return e[1] === 'like'; }).map(function(e) { return e[0]; });
+  var disliked = Object.entries(state).filter(function(e) { return e[1] === 'dislike'; }).map(function(e) { return e[0]; });
+  if (pc) liked.forEach(function(id)    { var c = mkClone(id,'prio'); if(c) pc.appendChild(c); });
+  if (nc) disliked.forEach(function(id) { var c = mkClone(id,'np');   if(c) nc.appendChild(c); });
+  var pe = document.getElementById('prio-empty') || document.getElementById('empty-prio');
+  var ne = document.getElementById('np-empty')   || document.getElementById('empty-np');
+  if (pe) pe.style.display = liked.length    ? 'none' : 'block';
+  if (ne) ne.style.display = disliked.length ? 'none' : 'block';
 }
 
-// ── Toggle a card ─────────────────────────────────────────────────────
+// -- Toggle a card ─────────────────────────────────────────────────
 function set(id, action) {
   var prev  = state[id];
   state[id] = (prev === action) ? null : action;
+  if (!state[id]) delete state[id];
   saveChoice(id, state[id]);
   btns(id);
   show(id, !state[id]);
@@ -1111,7 +1135,6 @@ function set(id, action) {
   counts();
 }
 
-// ── Force a card to a specific state (from prio/np tabs) ─────────────
 function forceSet(id, action) {
   state[id] = action;
   saveChoice(id, action);
@@ -1121,17 +1144,25 @@ function forceSet(id, action) {
   counts();
 }
 
-// ── Restore state on load ─────────────────────────────────────────────
+// -- Restore state on load ─────────────────────────────────────────
 function restoreState() {
-  ALL_IDS.forEach(function(id) {
-    if (state[id]) { show(id, false); btns(id); }
-    else           { show(id, true); }
+  var ALL_IDS = typeof window.ALL_IDS !== 'undefined' ? window.ALL_IDS : [];
+  // Also find all cards dynamically
+  document.querySelectorAll('.card[id], .card[id^="card-"]').forEach(function(card) {
+    var id = card.id.replace('card-','');
+    if (!id) return;
+    if (state[id]) {
+      show(id, false);
+      btns(id);
+    } else {
+      show(id, true);
+    }
   });
   refresh();
   counts();
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────
+// -- Boot ──────────────────────────────────────────────────────────
 loadChoices();
 </script>
 </body>
